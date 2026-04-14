@@ -1,0 +1,44 @@
+# IDE / Cursor
+.cursor/
+
+# Build artifacts
+server/bin/
+server/tmp/
+server/lunar-tear
+
+__pycache__/
+
+frida/build/
+node_modules/
+
+# Go
+server/vendor/
+
+# Certs (regenerate per-environment)
+server/certs/
+
+# Server assets (binary data, too large for git)
+server/assets/
+
+# Snapshots (recorded user state)
+snapshots/
+extracted_tables/
+master_data/
+master_data_before_eos/
+
+# Client APK and dumps
+client/
+tools/
+
+# Generated protobuf (regenerate: cd server && make proto)
+server/gen/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+frida/
+scripts/

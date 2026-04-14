@@ -1,0 +1,583 @@
+package userdata
+
+import (
+	"log"
+	"sort"
+
+	"lunar-tear/server/internal/gametime"
+	"lunar-tear/server/internal/store"
+)
+
+func init() {
+	register("IUserCharacter", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedCharacterRecords(user)...)
+		return s
+	})
+	register("IUserCostume", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedCostumeRecords(user)...)
+		return s
+	})
+	register("IUserWeapon", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(SortedWeaponRecords(user)...)
+		return s
+	})
+	register("IUserWeaponStory", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedWeaponStoryRecords(user)...)
+		return s
+	})
+	register("IUserWeaponNote", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedWeaponNoteRecords(user)...)
+		return s
+	})
+	register("IUserCompanion", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedCompanionRecords(user)...)
+		return s
+	})
+	register("IUserThought", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedThoughtRecords(user)...)
+		return s
+	})
+	register("IUserConsumableItem", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(SortedConsumableItemRecords(user)...)
+		return s
+	})
+	register("IUserMaterial", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(SortedMaterialRecords(user)...)
+		return s
+	})
+	register("IUserImportantItem", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedImportantItemRecords(user)...)
+		return s
+	})
+	register("IUserPremiumItem", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedPremiumItemRecords(user)...)
+		return s
+	})
+	register("IUserParts", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(SortedPartsRecords(user)...)
+		return s
+	})
+	register("IUserCostumeActiveSkill", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedCostumeActiveSkillRecords(user)...)
+		return s
+	})
+	register("IUserWeaponSkill", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(SortedWeaponSkillRecords(user)...)
+		return s
+	})
+	register("IUserWeaponAbility", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(SortedWeaponAbilityRecords(user)...)
+		return s
+	})
+	register("IUserExplore", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(exploreRecord(user))
+		return s
+	})
+	register("IUserExploreScore", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedExploreScoreRecords(user)...)
+		return s
+	})
+	register("IUserPartsGroupNote", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedPartsGroupNoteRecords(user)...)
+		return s
+	})
+	register("IUserPartsPreset", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedPartsPresetRecords(user)...)
+		return s
+	})
+	register("IUserCostumeAwakenStatusUp", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedCostumeAwakenStatusUpRecords(user)...)
+		return s
+	})
+	register("IUserAutoSaleSettingDetail", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedAutoSaleSettingRecords(user)...)
+		return s
+	})
+	register("IUserCharacterRebirth", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedCharacterRebirthRecords(user)...)
+		return s
+	})
+	register("IUserCageOrnamentReward", func(user store.UserState) string {
+		s, _ := encodeJSONMaps(sortedCageOrnamentRewardRecords(user)...)
+		return s
+	})
+	registerStatic(
+		"IUserCostumeLevelBonusReleaseStatus",
+		"IUserCostumeLotteryEffect",
+		"IUserCostumeLotteryEffectAbility",
+		"IUserCostumeLotteryEffectStatusUp",
+		"IUserCostumeLotteryEffectPending",
+		"IUserWeaponAwaken",
+		"IUserPartsPresetTag",
+		"IUserPartsStatusSub",
+	)
+}
+
+func sortedCharacterRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.Characters))
+	for id := range user.Characters {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		row := user.Characters[int32(id)]
+		records = append(records, map[string]any{
+			"userId":        user.UserId,
+			"characterId":   row.CharacterId,
+			"level":         row.Level,
+			"exp":           row.Exp,
+			"latestVersion": row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedCostumeRecords(user store.UserState) []map[string]any {
+	keys := sortedStringKeys(user.Costumes)
+	records := make([]map[string]any, 0, len(keys))
+	for _, key := range keys {
+		row := user.Costumes[key]
+		records = append(records, map[string]any{
+			"userId":              user.UserId,
+			"userCostumeUuid":     row.UserCostumeUuid,
+			"costumeId":           row.CostumeId,
+			"limitBreakCount":     row.LimitBreakCount,
+			"level":               row.Level,
+			"exp":                 row.Exp,
+			"headupDisplayViewId": row.HeadupDisplayViewId,
+			"acquisitionDatetime": row.AcquisitionDatetime,
+			"awakenCount":         row.AwakenCount,
+			"latestVersion":       row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedAutoSaleSettingRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.AutoSaleSettings))
+	for id := range user.AutoSaleSettings {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		row := user.AutoSaleSettings[int32(id)]
+		records = append(records, map[string]any{
+			"userId":                      user.UserId,
+			"possessionAutoSaleItemType":  row.PossessionAutoSaleItemType,
+			"possessionAutoSaleItemValue": row.PossessionAutoSaleItemValue,
+			"latestVersion":               gametime.NowMillis(),
+		})
+	}
+	return records
+}
+
+func sortedCostumeAwakenStatusUpRecords(user store.UserState) []map[string]any {
+	keys := make([]store.CostumeAwakenStatusKey, 0, len(user.CostumeAwakenStatusUps))
+	for k := range user.CostumeAwakenStatusUps {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].UserCostumeUuid != keys[j].UserCostumeUuid {
+			return keys[i].UserCostumeUuid < keys[j].UserCostumeUuid
+		}
+		return keys[i].StatusCalculationType < keys[j].StatusCalculationType
+	})
+	records := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		row := user.CostumeAwakenStatusUps[k]
+		records = append(records, map[string]any{
+			"userId":                user.UserId,
+			"userCostumeUuid":       row.UserCostumeUuid,
+			"statusCalculationType": int32(row.StatusCalculationType),
+			"hp":                    row.Hp,
+			"attack":                row.Attack,
+			"vitality":              row.Vitality,
+			"agility":               row.Agility,
+			"criticalRatio":         row.CriticalRatio,
+			"criticalAttack":        row.CriticalAttack,
+			"latestVersion":         row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func SortedWeaponRecords(user store.UserState) []map[string]any {
+	keys := sortedStringKeys(user.Weapons)
+	records := make([]map[string]any, 0, len(keys))
+	for _, key := range keys {
+		row := user.Weapons[key]
+		uuid := row.UserWeaponUuid
+		if uuid == "" {
+			log.Printf("[userdata] sortedWeaponRecords: using key as fallback for weapon key=%q (empty userWeaponUuid)", key)
+			uuid = key
+		}
+		records = append(records, map[string]any{
+			"userId":              user.UserId,
+			"userWeaponUuid":      uuid,
+			"weaponId":            row.WeaponId,
+			"level":               row.Level,
+			"exp":                 row.Exp,
+			"limitBreakCount":     row.LimitBreakCount,
+			"isProtected":         row.IsProtected,
+			"acquisitionDatetime": row.AcquisitionDatetime,
+			"latestVersion":       row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedWeaponStoryRecords(user store.UserState) []map[string]any {
+	if user.WeaponStories == nil {
+		return []map[string]any{}
+	}
+	weaponIdsInWeapons := make(map[int32]bool)
+	for _, row := range user.Weapons {
+		weaponIdsInWeapons[row.WeaponId] = true
+	}
+	weaponIds := make([]int32, 0, len(user.WeaponStories))
+	for weaponId := range user.WeaponStories {
+		if weaponIdsInWeapons[weaponId] {
+			weaponIds = append(weaponIds, weaponId)
+		}
+	}
+	sort.Slice(weaponIds, func(i, j int) bool { return weaponIds[i] < weaponIds[j] })
+	records := make([]map[string]any, 0, len(weaponIds))
+	for _, weaponId := range weaponIds {
+		row := user.WeaponStories[weaponId]
+		records = append(records, map[string]any{
+			"userId":                user.UserId,
+			"weaponId":              row.WeaponId,
+			"releasedMaxStoryIndex": row.ReleasedMaxStoryIndex,
+			"latestVersion":         row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedWeaponNoteRecords(user store.UserState) []map[string]any {
+	weaponIds := make([]int32, 0, len(user.WeaponNotes))
+	for id := range user.WeaponNotes {
+		weaponIds = append(weaponIds, id)
+	}
+	sort.Slice(weaponIds, func(i, j int) bool { return weaponIds[i] < weaponIds[j] })
+	records := make([]map[string]any, 0, len(weaponIds))
+	for _, id := range weaponIds {
+		row := user.WeaponNotes[id]
+		records = append(records, map[string]any{
+			"userId":                   user.UserId,
+			"weaponId":                 row.WeaponId,
+			"maxLevel":                 row.MaxLevel,
+			"maxLimitBreakCount":       row.MaxLimitBreakCount,
+			"firstAcquisitionDatetime": row.FirstAcquisitionDatetime,
+			"latestVersion":            row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedCompanionRecords(user store.UserState) []map[string]any {
+	keys := sortedStringKeys(user.Companions)
+	records := make([]map[string]any, 0, len(keys))
+	for _, key := range keys {
+		row := user.Companions[key]
+		records = append(records, map[string]any{
+			"userId":              user.UserId,
+			"userCompanionUuid":   row.UserCompanionUuid,
+			"companionId":         row.CompanionId,
+			"headupDisplayViewId": row.HeadupDisplayViewId,
+			"level":               row.Level,
+			"acquisitionDatetime": row.AcquisitionDatetime,
+			"latestVersion":       row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedThoughtRecords(user store.UserState) []map[string]any {
+	keys := sortedStringKeys(user.Thoughts)
+	records := make([]map[string]any, 0, len(keys))
+	for _, key := range keys {
+		row := user.Thoughts[key]
+		records = append(records, map[string]any{
+			"userId":              user.UserId,
+			"userThoughtUuid":     row.UserThoughtUuid,
+			"thoughtId":           row.ThoughtId,
+			"acquisitionDatetime": row.AcquisitionDatetime,
+			"latestVersion":       row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func SortedConsumableItemRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.ConsumableItems))
+	for id := range user.ConsumableItems {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+
+	nowMillis := gametime.NowMillis()
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		records = append(records, map[string]any{
+			"userId":                   user.UserId,
+			"consumableItemId":         int32(id),
+			"count":                    user.ConsumableItems[int32(id)],
+			"firstAcquisitionDatetime": nowMillis,
+			"latestVersion":            nowMillis,
+		})
+	}
+	return records
+}
+
+func SortedMaterialRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.Materials))
+	for id := range user.Materials {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+
+	nowMillis := gametime.NowMillis()
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		records = append(records, map[string]any{
+			"userId":                   user.UserId,
+			"materialId":               int32(id),
+			"count":                    user.Materials[int32(id)],
+			"firstAcquisitionDatetime": nowMillis,
+			"latestVersion":            nowMillis,
+		})
+	}
+	return records
+}
+
+func sortedImportantItemRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.ImportantItems))
+	for id := range user.ImportantItems {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+
+	nowMillis := gametime.NowMillis()
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		records = append(records, map[string]any{
+			"userId":                   user.UserId,
+			"importantItemId":          int32(id),
+			"count":                    user.ImportantItems[int32(id)],
+			"firstAcquisitionDatetime": nowMillis,
+			"latestVersion":            nowMillis,
+		})
+	}
+	return records
+}
+
+func sortedPremiumItemRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.PremiumItems))
+	for id := range user.PremiumItems {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+
+	nowMillis := gametime.NowMillis()
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		acqTime := user.PremiumItems[int32(id)]
+		if acqTime == 0 {
+			acqTime = nowMillis
+		}
+		records = append(records, map[string]any{
+			"userId":              user.UserId,
+			"premiumItemId":       int32(id),
+			"acquisitionDatetime": acqTime,
+			"latestVersion":       nowMillis,
+		})
+	}
+	return records
+}
+
+func SortedPartsRecords(user store.UserState) []map[string]any {
+	keys := sortedStringKeys(user.Parts)
+	records := make([]map[string]any, 0, len(keys))
+	for _, key := range keys {
+		row := user.Parts[key]
+		records = append(records, map[string]any{
+			"userId":              user.UserId,
+			"userPartsUuid":       row.UserPartsUuid,
+			"partsId":             row.PartsId,
+			"level":               row.Level,
+			"partsStatusMainId":   row.PartsStatusMainId,
+			"isProtected":         row.IsProtected,
+			"acquisitionDatetime": row.AcquisitionDatetime,
+			"latestVersion":       row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedPartsGroupNoteRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.PartsGroupNotes))
+	for id := range user.PartsGroupNotes {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		row := user.PartsGroupNotes[int32(id)]
+		records = append(records, map[string]any{
+			"userId":                   user.UserId,
+			"partsGroupId":             row.PartsGroupId,
+			"firstAcquisitionDatetime": row.FirstAcquisitionDatetime,
+			"latestVersion":            row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedPartsPresetRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.PartsPresets))
+	for id := range user.PartsPresets {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		row := user.PartsPresets[int32(id)]
+		records = append(records, map[string]any{
+			"userId":                   user.UserId,
+			"userPartsPresetNumber":    row.UserPartsPresetNumber,
+			"userPartsUuid01":          row.UserPartsUuid01,
+			"userPartsUuid02":          row.UserPartsUuid02,
+			"userPartsUuid03":          row.UserPartsUuid03,
+			"name":                     row.Name,
+			"userPartsPresetTagNumber": row.UserPartsPresetTagNumber,
+			"latestVersion":            row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedCostumeActiveSkillRecords(user store.UserState) []map[string]any {
+	keys := sortedStringKeys(user.CostumeActiveSkills)
+	records := make([]map[string]any, 0, len(keys))
+	for _, key := range keys {
+		row := user.CostumeActiveSkills[key]
+		records = append(records, map[string]any{
+			"userId":              user.UserId,
+			"userCostumeUuid":     row.UserCostumeUuid,
+			"level":               row.Level,
+			"acquisitionDatetime": row.AcquisitionDatetime,
+			"latestVersion":       row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func SortedWeaponSkillRecords(user store.UserState) []map[string]any {
+	keys := sortedStringKeys(user.WeaponSkills)
+	records := make([]map[string]any, 0)
+	for _, key := range keys {
+		for _, row := range user.WeaponSkills[key] {
+			records = append(records, map[string]any{
+				"userId":         user.UserId,
+				"userWeaponUuid": row.UserWeaponUuid,
+				"slotNumber":     row.SlotNumber,
+				"level":          row.Level,
+				"latestVersion":  int64(0),
+			})
+		}
+	}
+	return records
+}
+
+func SortedWeaponAbilityRecords(user store.UserState) []map[string]any {
+	keys := sortedStringKeys(user.WeaponAbilities)
+	records := make([]map[string]any, 0)
+	for _, key := range keys {
+		for _, row := range user.WeaponAbilities[key] {
+			records = append(records, map[string]any{
+				"userId":         user.UserId,
+				"userWeaponUuid": row.UserWeaponUuid,
+				"slotNumber":     row.SlotNumber,
+				"level":          row.Level,
+				"latestVersion":  int64(0),
+			})
+		}
+	}
+	return records
+}
+
+func exploreRecord(user store.UserState) map[string]any {
+	return map[string]any{
+		"userId":             user.UserId,
+		"isUseExploreTicket": user.Explore.IsUseExploreTicket,
+		"playingExploreId":   user.Explore.PlayingExploreId,
+		"latestPlayDatetime": user.Explore.LatestPlayDatetime,
+		"latestVersion":      user.Explore.LatestVersion,
+	}
+}
+
+func sortedCharacterRebirthRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.CharacterRebirths))
+	for id := range user.CharacterRebirths {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		row := user.CharacterRebirths[int32(id)]
+		records = append(records, map[string]any{
+			"userId":        user.UserId,
+			"characterId":   row.CharacterId,
+			"rebirthCount":  row.RebirthCount,
+			"latestVersion": row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedExploreScoreRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.ExploreScores))
+	for id := range user.ExploreScores {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		row := user.ExploreScores[int32(id)]
+		records = append(records, map[string]any{
+			"userId":                 user.UserId,
+			"exploreId":              row.ExploreId,
+			"maxScore":               row.MaxScore,
+			"maxScoreUpdateDatetime": row.MaxScoreUpdateDatetime,
+			"latestVersion":          row.LatestVersion,
+		})
+	}
+	return records
+}
+
+func sortedCageOrnamentRewardRecords(user store.UserState) []map[string]any {
+	ids := make([]int, 0, len(user.CageOrnamentRewards))
+	for id := range user.CageOrnamentRewards {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+
+	records := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		row := user.CageOrnamentRewards[int32(id)]
+		records = append(records, map[string]any{
+			"userId":              user.UserId,
+			"cageOrnamentId":      row.CageOrnamentId,
+			"acquisitionDatetime": row.AcquisitionDatetime,
+			"latestVersion":       row.LatestVersion,
+		})
+	}
+	return records
+}

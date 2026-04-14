@@ -1,0 +1,394 @@
+package questflow
+
+import (
+	"fmt"
+	"log"
+
+	"lunar-tear/server/internal/gameutil"
+	"lunar-tear/server/internal/masterdata"
+	"lunar-tear/server/internal/model"
+	"lunar-tear/server/internal/store"
+)
+
+func (h *QuestHandler) isQuestCleared(user *store.UserState, questId int32) bool {
+	quest, ok := user.Quests[questId]
+	if !ok {
+		panic(fmt.Sprintf("unknown questId=%d for isQuestCleared", questId))
+	}
+	return quest.QuestStateType == model.UserQuestStateTypeCleared
+}
+
+func appendMissionRewards(dst []RewardGrant, src []masterdata.QuestMissionRewardRow) []RewardGrant {
+	for _, r := range src {
+		dst = append(dst, RewardGrant{
+			PossessionType: r.PossessionType,
+			PossessionId:   r.PossessionId,
+			Count:          r.Count,
+		})
+	}
+	return dst
+}
+
+func (h *QuestHandler) firstClearRewardGroupId(user *store.UserState, questDef masterdata.QuestRow) int32 {
+	rewardGroupId := questDef.QuestFirstClearRewardGroupId
+	for _, switchRow := range h.FirstClearRewardSwitchesByQuestId[questDef.QuestId] {
+		if h.isQuestCleared(user, switchRow.SwitchConditionClearQuestId) {
+			rewardGroupId = switchRow.QuestFirstClearRewardGroupId
+			break
+		}
+	}
+	return rewardGroupId
+}
+
+func (h *QuestHandler) evaluateFinishOutcome(user *store.UserState, questId int32) FinishOutcome {
+	outcome := FinishOutcome{}
+	questState, ok := user.Quests[questId]
+	if !ok {
+		panic(fmt.Sprintf("unknown questId=%d for evaluateFinishOutcome", questId))
+	}
+	questDef, ok := h.QuestById[questId]
+	if !ok {
+		panic(fmt.Sprintf("unknown questId=%d for evaluateFinishOutcome", questId))
+	}
+
+	if !questState.IsRewardGranted {
+		rewardGroupId := h.firstClearRewardGroupId(user, questDef)
+		for _, reward := range h.FirstClearRewardsByGroupId[rewardGroupId] {
+			outcome.FirstClearRewards = append(outcome.FirstClearRewards, RewardGrant{
+				PossessionType: reward.PossessionType,
+				PossessionId:   reward.PossessionId,
+				Count:          reward.Count,
+			})
+		}
+	}
+
+	if user.MainQuest.CurrentQuestFlowType == int32(model.QuestFlowTypeReplayFlow) && questDef.QuestReplayFlowRewardGroupId > 0 {
+		for _, reward := range h.ReplayFlowRewardsByGroupId[questDef.QuestReplayFlowRewardGroupId] {
+			outcome.ReplayFlowFirstClearRewards = append(outcome.ReplayFlowFirstClearRewards, RewardGrant{
+				PossessionType: reward.PossessionType,
+				PossessionId:   reward.PossessionId,
+				Count:          reward.Count,
+			})
+		}
+	}
+
+	pendingClearCount := 0
+	regularMissionCount := 0
+	for _, questMissionId := range h.MissionIdsByQuestId[questId] {
+		missionDef, ok := h.MissionById[questMissionId]
+		if !ok || missionDef.QuestMissionConditionType == model.QuestMissionConditionTypeComplete {
+			continue
+		}
+		regularMissionCount++
+
+		key := store.QuestMissionKey{QuestId: questId, QuestMissionId: questMissionId}
+		mission := user.QuestMissions[key]
+
+		if !mission.IsClear {
+			pendingClearCount++
+			outcome.MissionClearRewards = appendMissionRewards(
+				outcome.MissionClearRewards,
+				h.MissionRewardsByMissionId[missionDef.QuestMissionRewardId],
+			)
+		}
+	}
+
+	priorClearCount := regularMissionCount - pendingClearCount
+	// On our server every mission auto-clears, so priorClearCount + pendingClearCount
+	// always equals regularMissionCount. The two-variable form is kept to mirror the
+	// original game's intent where individual missions could fail their conditions.
+	allRegularWillClear := regularMissionCount > 0 && (priorClearCount+pendingClearCount) == regularMissionCount
+	if allRegularWillClear {
+		for _, questMissionId := range h.MissionIdsByQuestId[questId] {
+			missionDef, ok := h.MissionById[questMissionId]
+			if !ok || missionDef.QuestMissionConditionType != model.QuestMissionConditionTypeComplete {
+				continue
+			}
+			key := store.QuestMissionKey{QuestId: questId, QuestMissionId: questMissionId}
+			if !user.QuestMissions[key].IsClear {
+				outcome.MissionClearCompleteRewards = appendMissionRewards(
+					outcome.MissionClearCompleteRewards,
+					h.MissionRewardsByMissionId[missionDef.QuestMissionRewardId],
+				)
+				outcome.BigWinClearedQuestMissionIds = append(outcome.BigWinClearedQuestMissionIds, questMissionId)
+			}
+		}
+		outcome.IsBigWin = len(outcome.BigWinClearedQuestMissionIds) > 0
+	}
+
+	outcome.DropRewards = h.computeDropRewards(questDef)
+	return outcome
+}
+
+func (h *QuestHandler) computeDropRewards(questDef masterdata.QuestRow) []RewardGrant {
+	if questDef.QuestPickupRewardGroupId == 0 {
+		return nil
+	}
+	var drops []RewardGrant
+	for _, dropId := range h.PickupRewardIdsByGroupId[questDef.QuestPickupRewardGroupId] {
+		if bdr, ok := h.BattleDropRewardById[dropId]; ok {
+			drops = append(drops, RewardGrant{
+				PossessionType: bdr.PossessionType,
+				PossessionId:   bdr.PossessionId,
+				Count:          bdr.Count,
+			})
+		}
+	}
+	return drops
+}
+
+func (h *QuestHandler) applyExpRewards(user *store.UserState, questId int32, nowMillis int64) {
+	questDef, ok := h.QuestById[questId]
+	if !ok {
+		return
+	}
+
+	oldLevel := user.Status.Level
+	user.Status.Exp += questDef.UserExp
+	user.Status.Level, user.Status.Exp = gameutil.LevelAndCap(user.Status.Exp, h.UserExpThresholds)
+	log.Printf("[applyExpRewards] questId=%d user: +%d exp -> total=%d level=%d", questId, questDef.UserExp, user.Status.Exp, user.Status.Level)
+
+	if user.Status.Level > oldLevel {
+		if maxStamina, ok := h.MaxStaminaByLevel[user.Status.Level]; ok {
+			store.ReplenishStamina(user, maxStamina*1000, nowMillis)
+		}
+	}
+
+	if h.RentalQuestIds[questId] {
+		log.Printf("[applyExpRewards] questId=%d skipping character/costume exp (rental deck)", questId)
+		return
+	}
+
+	deckCostumeUuids, deckCharacterIds := h.resolveDeckUnits(user, questId)
+	if deckCostumeUuids == nil {
+		log.Printf("[applyExpRewards] questId=%d skipping character/costume exp (deck not resolved)", questId)
+		return
+	}
+
+	if questDef.CharacterExp != 0 {
+		for id := range deckCharacterIds {
+			row := user.Characters[id]
+			row.Exp += questDef.CharacterExp
+			row.Level, row.Exp = gameutil.LevelAndCap(row.Exp, h.CharacterExpThresholds)
+			user.Characters[id] = row
+			log.Printf("[applyExpRewards] questId=%d character=%d: +%d exp -> total=%d level=%d", questId, id, questDef.CharacterExp, row.Exp, row.Level)
+		}
+	}
+
+	if questDef.CostumeExp != 0 {
+		for key := range deckCostumeUuids {
+			row := user.Costumes[key]
+			cm, ok := h.CostumeById[row.CostumeId]
+			if !ok {
+				continue
+			}
+			if maxLevelFunc, hasMax := h.CostumeMaxLevelByRarity[cm.RarityType]; hasMax {
+				maxLevel := maxLevelFunc.Evaluate(row.LimitBreakCount)
+				if row.Level >= maxLevel {
+					log.Printf("[applyExpRewards] questId=%d costume=%d (key=%s): at max level %d, skipping", questId, row.CostumeId, key, row.Level)
+					continue
+				}
+			}
+			row.Exp += questDef.CostumeExp
+			if thresholds, ok := h.CostumeExpByRarity[cm.RarityType]; ok {
+				row.Level, row.Exp = gameutil.LevelAndCap(row.Exp, thresholds)
+				if maxLevelFunc, hasMax := h.CostumeMaxLevelByRarity[cm.RarityType]; hasMax {
+					maxLevel := maxLevelFunc.Evaluate(row.LimitBreakCount)
+					if row.Level > maxLevel && int(maxLevel) < len(thresholds) {
+						row.Level = maxLevel
+						row.Exp = thresholds[maxLevel]
+					}
+				}
+			}
+			user.Costumes[key] = row
+			log.Printf("[applyExpRewards] questId=%d costume=%d (key=%s): +%d exp -> total=%d level=%d", questId, row.CostumeId, key, questDef.CostumeExp, row.Exp, row.Level)
+		}
+	}
+}
+
+func (h *QuestHandler) resolveDeckUnits(user *store.UserState, questId int32) (costumeUuids map[string]bool, characterIds map[int32]bool) {
+	dn := user.Quests[questId].UserDeckNumber
+	if dn == 0 {
+		return nil, nil
+	}
+	deck, ok := user.Decks[store.DeckKey{DeckType: model.DeckTypeQuest, UserDeckNumber: dn}]
+	if !ok {
+		return nil, nil
+	}
+
+	costumeUuids = make(map[string]bool)
+	characterIds = make(map[int32]bool)
+	for _, dcUuid := range []string{deck.UserDeckCharacterUuid01, deck.UserDeckCharacterUuid02, deck.UserDeckCharacterUuid03} {
+		if dcUuid == "" {
+			continue
+		}
+		dc, ok := user.DeckCharacters[dcUuid]
+		if !ok || dc.UserCostumeUuid == "" {
+			continue
+		}
+		costumeUuids[dc.UserCostumeUuid] = true
+		if costume, ok := user.Costumes[dc.UserCostumeUuid]; ok {
+			if cm, ok := h.CostumeById[costume.CostumeId]; ok {
+				characterIds[cm.CharacterId] = true
+			}
+		}
+	}
+
+	if len(costumeUuids) == 0 {
+		return nil, nil
+	}
+	return costumeUuids, characterIds
+}
+
+func (h *QuestHandler) applyQuestRewards(user *store.UserState, questId int32, nowMillis int64) {
+	questDef, ok := h.QuestById[questId]
+	if !ok {
+		return
+	}
+
+	h.applyExpRewards(user, questId, nowMillis)
+
+	if questDef.Gold != 0 {
+		user.ConsumableItems[h.Config.ConsumableItemIdForGold] += questDef.Gold
+		log.Printf("[applyQuestRewards] questId=%d gold: +%d -> total=%d", questId, questDef.Gold, user.ConsumableItems[h.Config.ConsumableItemIdForGold])
+	}
+
+	rewardGroupId := h.firstClearRewardGroupId(user, questDef)
+	for _, reward := range h.FirstClearRewardsByGroupId[rewardGroupId] {
+		h.applyRewardPossession(user, reward.PossessionType, reward.PossessionId, reward.Count, nowMillis)
+	}
+}
+
+func (h *QuestHandler) applyRewardPossession(user *store.UserState, possType model.PossessionType, possId, count int32, nowMillis int64) {
+	switch possType {
+	case model.PossessionTypeCompanion:
+		h.grantCompanion(user, possId, nowMillis)
+	case model.PossessionTypeParts:
+		h.grantParts(user, possId, nowMillis)
+	default:
+		h.Granter.GrantFull(user, possType, possId, count, nowMillis)
+	}
+}
+
+func (h *QuestHandler) grantCompanion(user *store.UserState, companionId int32, nowMillis int64) {
+	for _, row := range user.Companions {
+		if row.CompanionId == companionId {
+			return
+		}
+	}
+	key := fmt.Sprintf("reward-companion-%d", companionId)
+	user.Companions[key] = store.CompanionState{
+		UserCompanionUuid:   key,
+		CompanionId:         companionId,
+		Level:               1,
+		HeadupDisplayViewId: 1,
+		AcquisitionDatetime: nowMillis,
+	}
+}
+
+func (h *QuestHandler) grantParts(user *store.UserState, partsId int32, nowMillis int64) {
+	for _, row := range user.Parts {
+		if row.PartsId == partsId {
+			return
+		}
+	}
+
+	var mainStatId int32
+	if partsDef, ok := h.PartsById[partsId]; ok {
+		mainStatId = h.DefaultPartsStatusMainByLotteryGroup[partsDef.PartsStatusMainLotteryGroupId]
+
+		if _, exists := user.PartsGroupNotes[partsDef.PartsGroupId]; !exists {
+			user.PartsGroupNotes[partsDef.PartsGroupId] = store.PartsGroupNoteState{
+				PartsGroupId:             partsDef.PartsGroupId,
+				FirstAcquisitionDatetime: nowMillis,
+				LatestVersion:            nowMillis,
+			}
+		}
+	}
+
+	key := fmt.Sprintf("reward-parts-%d", partsId)
+	user.Parts[key] = store.PartsState{
+		UserPartsUuid:       key,
+		PartsId:             partsId,
+		Level:               1,
+		PartsStatusMainId:   mainStatId,
+		AcquisitionDatetime: nowMillis,
+	}
+}
+
+func (h *QuestHandler) grantWeaponStoryUnlock(user *store.UserState, weaponId, storyIndex int32, nowMillis int64) {
+	store.GrantWeaponStoryUnlock(user, weaponId, storyIndex, nowMillis)
+}
+
+var tutorialCompanionChoices = map[int32]int32{
+	1: 2,  // bear + fire (Cat=1, Attr=2)
+	2: 1,  // bear + wind (Cat=1, Attr=6)
+	3: 7,  // doll + fire (Cat=3, Attr=2)
+	4: 10, // doll + wind (Cat=3, Attr=6)
+}
+
+func (h *QuestHandler) ApplyTutorialReward(user *store.UserState, tutorialType model.TutorialType, choiceId int32, nowMillis int64) []RewardGrant {
+	switch tutorialType {
+	case model.TutorialTypeCompanion:
+		return h.applyCompanionTutorialReward(user, choiceId, nowMillis)
+	default:
+		return nil
+	}
+}
+
+func (h *QuestHandler) applyCompanionTutorialReward(user *store.UserState, choiceId int32, nowMillis int64) []RewardGrant {
+	companionId, ok := tutorialCompanionChoices[choiceId]
+	if !ok {
+		log.Printf("[QuestHandler] unknown companion tutorial choiceId=%d", choiceId)
+		return nil
+	}
+	h.grantCompanion(user, companionId, nowMillis)
+	return []RewardGrant{{
+		PossessionType: model.PossessionTypeCompanion,
+		PossessionId:   companionId,
+		Count:          1,
+	}}
+}
+
+func (h *QuestHandler) BattleDropRewards(questId int32) []masterdata.BattleDropInfo {
+	return h.BattleDropsByQuestId[questId]
+}
+
+func (h *QuestHandler) grantWeaponStoryUnlocksForQuestScene(user *store.UserState, questId int32, resultType model.QuestResultType, nowMillis int64) {
+	if resultType == model.QuestResultTypeHalfResult {
+		questDef, ok := h.QuestById[questId]
+		if !ok {
+			return
+		}
+		rewardGroupId := h.firstClearRewardGroupId(user, questDef)
+		for _, reward := range h.FirstClearRewardsByGroupId[rewardGroupId] {
+			if reward.PossessionType != model.PossessionTypeWeapon {
+				continue
+			}
+			weaponId := reward.PossessionId
+			weapon, ok := h.WeaponById[weaponId]
+			if !ok || weapon.WeaponStoryReleaseConditionGroupId == 0 {
+				continue
+			}
+			groupId := weapon.WeaponStoryReleaseConditionGroupId
+			for _, cond := range h.ReleaseConditionsByGroupId[groupId] {
+				if cond.WeaponStoryReleaseConditionType == model.WeaponStoryReleaseConditionTypeAcquisition && cond.ConditionValue == 0 {
+					h.grantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
+				}
+			}
+		}
+		return
+	}
+	if resultType == model.QuestResultTypeFullResult {
+		for groupId, conditions := range h.ReleaseConditionsByGroupId {
+			for _, cond := range conditions {
+				if cond.WeaponStoryReleaseConditionType == model.WeaponStoryReleaseConditionTypeQuestClear && cond.ConditionValue == questId {
+					for _, weaponId := range h.WeaponIdsByReleaseConditionGroupId[groupId] {
+						h.grantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
+					}
+					break
+				}
+			}
+		}
+	}
+}

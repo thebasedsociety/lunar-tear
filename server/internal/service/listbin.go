@@ -313,7 +313,15 @@ func loadInfoIndex(revision string) map[string]infoAlias {
 	return m
 }
 
-func pathStrToFullPaths(revision, assetType, pathStr string) []string {
+type pathCandidate struct {
+	Path             string
+	IsLocaleFallback bool
+}
+
+// pathStrToFullPaths converts a list.bin path string (using ')' separators) into filesystem
+// candidates. The original locale path is returned first; if the path contains ja or ko,
+// an en locale fallback is appended (marked IsLocaleFallback so callers can skip MD5 validation).
+func pathStrToFullPaths(revision, assetType, pathStr string) []pathCandidate {
 	fsPath := strings.ReplaceAll(pathStr, ")", "/")
 	if strings.Contains(fsPath, "..") || filepath.IsAbs(fsPath) || strings.HasPrefix(fsPath, "/") {
 		return nil
@@ -322,32 +330,36 @@ func pathStrToFullPaths(revision, assetType, pathStr string) []string {
 	if strings.Contains(fsPath, "..") {
 		return nil
 	}
-	// Prefer "global" (en) when list.bin points to ja/ko: try en first, then original.
-	var pathStrs []string
+	type tagged struct {
+		pathStr  string
+		fallback bool
+	}
+	entries := []tagged{{pathStr, false}}
 	if strings.Contains(pathStr, ")ja)") {
-		pathStrs = append(pathStrs, strings.ReplaceAll(pathStr, ")ja)", ")en)"))
+		entries = append(entries, tagged{strings.ReplaceAll(pathStr, ")ja)", ")en)"), true})
 	}
 	if strings.Contains(pathStr, ")ko)") {
-		pathStrs = append(pathStrs, strings.ReplaceAll(pathStr, ")ko)", ")en)"))
+		entries = append(entries, tagged{strings.ReplaceAll(pathStr, ")ko)", ")en)"), true})
 	}
-	pathStrs = append(pathStrs, pathStr)
 	base := filepath.Join("assets", "revisions", revision)
-	var out []string
+	var out []pathCandidate
 	seen := make(map[string]bool)
-	for _, p := range pathStrs {
-		cleaned := filepath.Clean(strings.ReplaceAll(p, ")", "/"))
+	for _, e := range entries {
+		cleaned := filepath.Clean(strings.ReplaceAll(e.pathStr, ")", "/"))
 		if seen[cleaned] {
 			continue
 		}
 		seen[cleaned] = true
+		var fullPath string
 		switch assetType {
 		case "assetbundle":
-			out = append(out, filepath.Join(base, "assetbundle", cleaned+".assetbundle"))
+			fullPath = filepath.Join(base, "assetbundle", cleaned+".assetbundle")
 		case "resources":
-			out = append(out, filepath.Join(base, "resources", cleaned))
+			fullPath = filepath.Join(base, "resources", cleaned)
 		default:
 			return nil
 		}
+		out = append(out, pathCandidate{Path: fullPath, IsLocaleFallback: e.fallback})
 	}
 	return out
 }
@@ -372,6 +384,8 @@ func duplicateCandidatePath(candidate assetCandidate, assetType, targetRevision,
 
 // objectIdToFilePathCandidates returns candidate file paths for the object: list.bin path, locale fallbacks
 // (ja/ko -> en), then info.json duplicate mappings (from-name -> to-name, possibly in a different revision).
+// The original locale path is tried first (with MD5 validation); locale fallbacks are tried after
+// (without MD5 validation, since the hash in list.bin refers to the original locale's content).
 // Callers should try each path until one exists on disk.
 func objectIdToFilePathCandidates(revision, assetType, objectId string) (candidates []assetCandidate, size int64, ok bool) {
 	idx, ok := loadListBinIndex(revision)
@@ -387,12 +401,16 @@ func objectIdToFilePathCandidates(revision, assetType, objectId string) (candida
 		return nil, 0, false
 	}
 	seen := make(map[string]bool)
-	for _, path := range paths {
+	for _, pc := range paths {
+		md5 := entry.MD5
+		if pc.IsLocaleFallback {
+			md5 = ""
+		}
 		candidates = appendUniqueCandidate(candidates, seen, assetCandidate{
-			Path:        path,
+			Path:        pc.Path,
 			Revision:    revision,
 			Source:      "list.bin",
-			ExpectedMD5: entry.MD5,
+			ExpectedMD5: md5,
 		})
 	}
 	// Add paths from info.json: when requested file is a "from-name" (duplicate not included), serve "to-name" instead.

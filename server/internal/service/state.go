@@ -28,7 +28,6 @@ var startedGameStartTables = []string{
 	"IUserQuestMission",
 	"IUserTutorialProgress",
 	"IUserWeaponNote",
-	"IUserWeaponStory",
 	"IUserCostumeActiveSkill",
 	"IUserDeckTypeNote",
 	"IUserDeckSubWeaponGroup",

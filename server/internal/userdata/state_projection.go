@@ -170,3 +170,13 @@ func BuildDiffFromTablesOrdered(tables map[string]string, order []string) map[st
 	}
 	return diff
 }
+
+func AddWeaponStoryDiff(diff map[string]*pb.DiffData, user store.UserState, weaponIds []int32) {
+	if len(weaponIds) == 0 {
+		return
+	}
+	diff["IUserWeaponStory"] = &pb.DiffData{
+		UpdateRecordsJson: WeaponStoryRecordsForIds(user, weaponIds),
+		DeleteKeysJson:    "[]",
+	}
+}

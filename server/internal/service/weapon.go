@@ -20,7 +20,6 @@ var weaponDiffTables = []string{
 	"IUserWeaponAbility",
 	"IUserMaterial",
 	"IUserConsumableItem",
-	"IUserWeaponStory",
 }
 
 var limitBreakDiffTables = []string{
@@ -98,6 +97,7 @@ func (s *WeaponServiceServer) EnhanceByMaterial(ctx context.Context, req *pb.Enh
 	userId := currentUserId(ctx, s.users, s.sessions)
 	nowMillis := gametime.NowMillis()
 
+	var changedStoryIds []int32
 	snapshot, err := s.users.UpdateUser(userId, func(user *store.UserState) {
 		weapon, ok := user.Weapons[req.UserWeaponUuid]
 		if !ok {
@@ -149,6 +149,8 @@ func (s *WeaponServiceServer) EnhanceByMaterial(ctx context.Context, req *pb.Enh
 		weapon.LatestVersion = nowMillis
 		user.Weapons[req.UserWeaponUuid] = weapon
 		log.Printf("[WeaponService] EnhanceByMaterial: weaponId=%d +%d exp -> total=%d level=%d", weapon.WeaponId, totalExp, weapon.Exp, weapon.Level)
+
+		changedStoryIds = s.checkWeaponStoryUnlocks(user, weapon.WeaponId, weapon.Level, nowMillis)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("weapon enhance by material: %w", err)
@@ -156,6 +158,7 @@ func (s *WeaponServiceServer) EnhanceByMaterial(ctx context.Context, req *pb.Enh
 
 	tables := userdata.FullClientTableMap(snapshot)
 	diff := userdata.BuildDiffFromTables(userdata.SelectTables(tables, weaponDiffTables))
+	userdata.AddWeaponStoryDiff(diff, snapshot, changedStoryIds)
 
 	return &pb.EnhanceByMaterialResponse{
 		IsGreatSuccess:         false,
@@ -227,6 +230,7 @@ func (s *WeaponServiceServer) Evolve(ctx context.Context, req *pb.EvolveRequest)
 	userId := currentUserId(ctx, s.users, s.sessions)
 	nowMillis := gametime.NowMillis()
 
+	var changedStoryIds []int32
 	snapshot, err := s.users.UpdateUser(userId, func(user *store.UserState) {
 		weapon, ok := user.Weapons[req.UserWeaponUuid]
 		if !ok {
@@ -286,7 +290,7 @@ func (s *WeaponServiceServer) Evolve(ctx context.Context, req *pb.EvolveRequest)
 
 		log.Printf("[WeaponService] Evolve: weaponId %d -> %d", wm.WeaponId, evolvedId)
 
-		s.checkEvolutionStoryUnlocks(user, evolvedId, nowMillis)
+		changedStoryIds = s.checkWeaponStoryUnlocks(user, evolvedId, weapon.Level, nowMillis)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("weapon evolve: %w", err)
@@ -294,6 +298,7 @@ func (s *WeaponServiceServer) Evolve(ctx context.Context, req *pb.EvolveRequest)
 
 	tables := userdata.FullClientTableMap(snapshot)
 	diff := userdata.BuildDiffFromTables(userdata.SelectTables(tables, weaponDiffTables))
+	userdata.AddWeaponStoryDiff(diff, snapshot, changedStoryIds)
 
 	return &pb.EvolveResponse{DiffUserData: diff}, nil
 }
@@ -665,6 +670,7 @@ func (s *WeaponServiceServer) EnhanceByWeapon(ctx context.Context, req *pb.Enhan
 		Track("IUserWeaponSkill", oldUser, userdata.SortedWeaponSkillRecords, []string{"userId", "userWeaponUuid", "slotNumber"}).
 		Track("IUserWeaponAbility", oldUser, userdata.SortedWeaponAbilityRecords, []string{"userId", "userWeaponUuid", "slotNumber"})
 
+	var changedStoryIds []int32
 	snapshot, err := s.users.UpdateUser(userId, func(user *store.UserState) {
 		weapon, ok := user.Weapons[req.UserWeaponUuid]
 		if !ok {
@@ -725,6 +731,8 @@ func (s *WeaponServiceServer) EnhanceByWeapon(ctx context.Context, req *pb.Enhan
 		weapon.LatestVersion = nowMillis
 		user.Weapons[req.UserWeaponUuid] = weapon
 		log.Printf("[WeaponService] EnhanceByWeapon: weaponId=%d +%d exp -> total=%d level=%d", weapon.WeaponId, totalExp, weapon.Exp, weapon.Level)
+
+		changedStoryIds = s.checkWeaponStoryUnlocks(user, weapon.WeaponId, weapon.Level, nowMillis)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("weapon enhance by weapon: %w", err)
@@ -732,6 +740,7 @@ func (s *WeaponServiceServer) EnhanceByWeapon(ctx context.Context, req *pb.Enhan
 
 	tables := userdata.SelectTables(userdata.FullClientTableMap(snapshot), weaponDiffTables)
 	diff := tracker.Apply(snapshot, tables)
+	userdata.AddWeaponStoryDiff(diff, snapshot, changedStoryIds)
 
 	return &pb.EnhanceByWeaponResponse{
 		IsGreatSuccess:       false,
@@ -740,21 +749,49 @@ func (s *WeaponServiceServer) EnhanceByWeapon(ctx context.Context, req *pb.Enhan
 	}, nil
 }
 
-func (s *WeaponServiceServer) checkEvolutionStoryUnlocks(user *store.UserState, weaponId int32, nowMillis int64) {
+func (s *WeaponServiceServer) checkWeaponStoryUnlocks(user *store.UserState, weaponId, level int32, nowMillis int64) []int32 {
 	wm, ok := s.catalog.Weapons[weaponId]
 	if !ok || wm.WeaponStoryReleaseConditionGroupId == 0 {
-		return
+		return nil
 	}
 	evoOrder, hasEvo := s.catalog.EvolutionOrder[weaponId]
 	conditions := s.catalog.ReleaseConditionsByGroupId[wm.WeaponStoryReleaseConditionGroupId]
+
+	changed := false
 	for _, cond := range conditions {
+		granted := false
 		switch cond.WeaponStoryReleaseConditionType {
+		case model.WeaponStoryReleaseConditionTypeAcquisition:
+			granted = store.GrantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
+		case model.WeaponStoryReleaseConditionTypeReachSpecifiedLevel:
+			if level >= cond.ConditionValue {
+				granted = store.GrantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
+			}
+		case model.WeaponStoryReleaseConditionTypeReachInitialMaxLevel:
+			if maxFunc, ok := s.catalog.MaxLevelByEnhanceId[wm.WeaponSpecificEnhanceId]; ok {
+				if level >= maxFunc.Evaluate(0) {
+					granted = store.GrantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
+				}
+			}
+		case model.WeaponStoryReleaseConditionTypeReachOnceEvolvedMaxLevel:
+			if hasEvo && evoOrder >= 1 {
+				if maxFunc, ok := s.catalog.MaxLevelByEnhanceId[wm.WeaponSpecificEnhanceId]; ok {
+					if level >= maxFunc.Evaluate(0) {
+						granted = store.GrantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
+					}
+				}
+			}
 		case model.WeaponStoryReleaseConditionTypeReachSpecifiedEvolutionCount:
 			if hasEvo && evoOrder >= cond.ConditionValue {
-				store.GrantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
+				granted = store.GrantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
 			}
-		case model.WeaponStoryReleaseConditionTypeAcquisition:
-			store.GrantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
+		}
+		if granted {
+			changed = true
 		}
 	}
+	if changed {
+		return []int32{weaponId}
+	}
+	return nil
 }

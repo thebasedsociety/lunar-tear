@@ -104,6 +104,14 @@ type PossessionGranter struct {
 	WeaponSkillSlots   map[int32][]int32
 	WeaponAbilitySlots map[int32][]int32
 	ReleaseConditions  map[int32][]WeaponStoryReleaseCond
+
+	LastChangedStoryWeaponIds []int32
+}
+
+func (g *PossessionGranter) DrainChangedStoryWeaponIds() []int32 {
+	ids := g.LastChangedStoryWeaponIds
+	g.LastChangedStoryWeaponIds = nil
+	return ids
 }
 
 func (g *PossessionGranter) GrantFull(user *UserState, possessionType model.PossessionType, possessionId, count int32, nowMillis int64) {
@@ -170,15 +178,23 @@ func (g *PossessionGranter) GrantWeapon(user *UserState, weaponId int32, nowMill
 
 	g.populateWeaponSkillsAbilities(user, key, weapon)
 	if weapon.WeaponStoryReleaseConditionGroupId != 0 {
+		changed := false
 		for _, cond := range g.ReleaseConditions[weapon.WeaponStoryReleaseConditionGroupId] {
 			switch cond.WeaponStoryReleaseConditionType {
 			case model.WeaponStoryReleaseConditionTypeAcquisition:
-				grantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
+				if grantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis) {
+					changed = true
+				}
 			case model.WeaponStoryReleaseConditionTypeQuestClear:
 				if qs, ok := user.Quests[cond.ConditionValue]; ok && qs.QuestStateType == model.UserQuestStateTypeCleared {
-					grantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis)
+					if grantWeaponStoryUnlock(user, weaponId, cond.StoryIndex, nowMillis) {
+						changed = true
+					}
 				}
 			}
+		}
+		if changed {
+			g.LastChangedStoryWeaponIds = append(g.LastChangedStoryWeaponIds, weaponId)
 		}
 	}
 }
@@ -208,11 +224,11 @@ func (g *PossessionGranter) populateWeaponSkillsAbilities(user *UserState, weapo
 	}
 }
 
-func GrantWeaponStoryUnlock(user *UserState, weaponId, storyIndex int32, nowMillis int64) {
-	grantWeaponStoryUnlock(user, weaponId, storyIndex, nowMillis)
+func GrantWeaponStoryUnlock(user *UserState, weaponId, storyIndex int32, nowMillis int64) bool {
+	return grantWeaponStoryUnlock(user, weaponId, storyIndex, nowMillis)
 }
 
-func grantWeaponStoryUnlock(user *UserState, weaponId, storyIndex int32, nowMillis int64) {
+func grantWeaponStoryUnlock(user *UserState, weaponId, storyIndex int32, nowMillis int64) bool {
 	hasWeapon := false
 	for _, row := range user.Weapons {
 		if row.WeaponId == weaponId {
@@ -222,20 +238,21 @@ func grantWeaponStoryUnlock(user *UserState, weaponId, storyIndex int32, nowMill
 	}
 	if !hasWeapon {
 		log.Printf("[grantWeaponStoryUnlock] skipping weaponId=%d (weapon not in user.Weapons)", weaponId)
-		return
+		return false
 	}
 	if user.WeaponStories == nil {
 		user.WeaponStories = make(map[int32]WeaponStoryState)
 	}
 	cur := user.WeaponStories[weaponId]
 	if storyIndex <= cur.ReleasedMaxStoryIndex {
-		return
+		return false
 	}
 	user.WeaponStories[weaponId] = WeaponStoryState{
 		WeaponId:              weaponId,
 		ReleasedMaxStoryIndex: storyIndex,
 		LatestVersion:         nowMillis,
 	}
+	return true
 }
 
 func EnsureDefaultDeck(user *UserState, nowMillis int64) {
